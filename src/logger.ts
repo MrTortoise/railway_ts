@@ -1,1 +1,3 @@
-export const error = (message: string): void => console.error(message)
+import { SomeError } from "./errors";
+
+export const error = (message: SomeError): void => console.error(message.message, message.data)
