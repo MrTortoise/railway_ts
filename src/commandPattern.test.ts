@@ -91,19 +91,7 @@ const curriedEventToCommand = curry(eventToCommand)
 const eventToWoopCommand = curriedEventToCommand(queryStringsToFetchAThingCommand) // This build woop commands from events
 
 
-describe('need to parse an event into a command', () => {
-  it('will parse into the fetch command', () => {
 
-    const sessionId = newUuid()
-    const commandResult = eventToWoopCommand(validEvent(sessionId))
-    expect(commandResult).toStrictEqual(Right({ entityId: sessionId, thingToWoop: 'dave' }))
-  })
-
-  it('will error into an error when invalid session id', () => {
-    const commandResult = eventToWoopCommand(invalidEvent)
-    expect(commandResult).toStrictEqual(Left({ message: "Param Validation Failed", data: { parameter: "queryStrings.sessionId", value: "asdf", reason: "not uuid" } }))
-  })
-})
 
 // this is the domain type - this maps onto language
 type Aggregate = {
@@ -224,7 +212,25 @@ const saveSessionAdapter = async (agg: Aggregate): Promise<Either<DependencyErro
   return Right(agg)
 }
 
+const actionWithLogging = async (logger: ILogger, agg: AggregateWithCommand<Command>): Promise<Either<SomeError, AggregateWithCommand<Command>>> => {
+  logger.info("ooo look its a log message", {})
+  const a = { ...agg }
+  return Right(a)
+}
+
+
 describe('woop a thing woops aggregates', () => {
+  it('will parse into the fetch command', () => {
+
+    const sessionId = newUuid()
+    const commandResult = eventToWoopCommand(validEvent(sessionId))
+    expect(commandResult).toStrictEqual(Right({ entityId: sessionId, thingToWoop: 'dave' }))
+  })
+
+  it('will error into an error when invalid session id', () => {
+    const commandResult = eventToWoopCommand(invalidEvent)
+    expect(commandResult).toStrictEqual(Left({ message: "Param Validation Failed", data: { parameter: "queryStrings.sessionId", value: "asdf", reason: "not uuid" } }))
+  })
   it('will return error if the command fails to parse', async () => {
     const curriedDoer = curry(doCommandOnThing)
     const logger = new Logger()
@@ -274,11 +280,17 @@ describe('woop a thing woops aggregates', () => {
 
     expect(expected).toStrictEqual(Left({ message: "Database blew up", data: { "dbAddress": "daves address" } }))
   })
-})
 
+  it.only('will take dependencies via currying', async () => {
+    const curriedDoer = curry(doCommandOnThing)
+    const logger = new Logger()
+    const actionWithLoggerSet = curry(actionWithLogging)(logger)
+    const curriedDoActions = curry(doActions)([actionWithLoggerSet, doThing])
+    const eventHandler = curriedDoer(logger, eventToWoopCommand, loadSessionSuccessfully, curriedDoActions, saveSessionAdapter)
 
-describe('actions often have their own dependencies', () => {
-  it('will take dependencies via currying', () => {
+    const sessionId = newUuid()
+    const actual = await eventHandler(validEvent(sessionId))
+    expect(actual).toStrictEqual(Right({ data: "woop", gid: sessionId }))
 
   })
 })
