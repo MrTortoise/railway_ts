@@ -262,7 +262,7 @@ describe('woop a thing woops aggregates', () => {
   })
 
   it('will fail when session fails to do a thing', async () => {
-    const baddoThing: Action = async () => {
+    const baddoThing: Action<Command> = async () => {
       return Left({ message: "Database blew up", data: { dbAddress: "daves address" } })
     }
     const curriedDoer = curry(doCommandOnThing)
@@ -273,14 +273,8 @@ describe('woop a thing woops aggregates', () => {
     const expected = await eventHandler(validEvent(sessionId))
 
     expect(expected).toStrictEqual(Left({ message: "Database blew up", data: { "dbAddress": "daves address" } }))
-
   })
 })
-
-const loggingAction: Promise<Either<SomeError, AggregateWithCommand<Command>>> = async (logger, message, agg) => {
-
-}
-
 
 
 describe('actions often have their own dependencies', () => {
