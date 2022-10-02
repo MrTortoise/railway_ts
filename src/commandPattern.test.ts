@@ -213,7 +213,7 @@ const saveSessionAdapter = async (agg: Aggregate): Promise<Either<DependencyErro
 }
 
 const actionWithLogging = async (logger: ILogger, agg: AggregateWithCommand<Command>): Promise<Either<SomeError, AggregateWithCommand<Command>>> => {
-  logger.info("ooo look its a log message", {})
+  logger.info("ooo look its a log message - this could literallyu be doing anything", {})
   const a = { ...agg }
   return Right(a)
 }
