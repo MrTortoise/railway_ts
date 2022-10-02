@@ -281,7 +281,7 @@ describe('woop a thing woops aggregates', () => {
     expect(expected).toStrictEqual(Left({ message: "Database blew up", data: { "dbAddress": "daves address" } }))
   })
 
-  it.only('will take dependencies via currying', async () => {
+  it('will take dependencies via currying', async () => {
     const curriedDoer = curry(doCommandOnThing)
     const logger = new Logger()
     const actionWithLoggerSet = curry(actionWithLogging)(logger)
