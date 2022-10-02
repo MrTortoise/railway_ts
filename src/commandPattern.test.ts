@@ -181,9 +181,19 @@ describe('woop a thing woops aggregates', () => {
     const curriedDoer = curry(doCommandOnThing)
     const eventHandler = curriedDoer(eventToWoopCommand, loadSessionSuccessfully, doThing, saveSessionAdapter)
 
-    const sessionId = newUuid()
     const expected = await eventHandler(validEvent("dave"))
+
     expect(expected).toStrictEqual(Left({ message: "Param Validation Failed", data: { parameter: "queryStrings.sessionId", reason: "not uuid", value: "dave" } }))
+  })
+
+  it('will succees with a valid session id', async () => {
+    const curriedDoer = curry(doCommandOnThing)
+    const eventHandler = curriedDoer(eventToWoopCommand, loadSessionSuccessfully, doThing, saveSessionAdapter)
+
+    const sessionId = newUuid()
+    const expected = await eventHandler(validEvent(sessionId))
+
+    expect(expected).toStrictEqual(Right({ gid: sessionId, data: "woop" }))
 
   })
 })
