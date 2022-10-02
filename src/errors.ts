@@ -44,7 +44,10 @@ export type StateError = {
   data: EntityNotFoundData
 }
 
-export type DependencyErrorMessages = "Could not parse input" | "no port in config"
+export type DependencyErrorMessages = "Database blew up"
+export type DatabaseDead = {
+  dbAddress: string
+}
 export type FailedToParseData = {
   errorMessage: string
   resourceHost: string
@@ -53,7 +56,7 @@ export type FailedToParseData = {
 
 export type DependencyError = {
   message: DependencyErrorMessages
-  data: FailedToParseData
+  data: FailedToParseData | DatabaseDead
 }
 export type SomeError =
   DependencyError

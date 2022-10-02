@@ -147,7 +147,7 @@ async function loadWithCommand<TCommand extends Command>(
 type CommandParser<TCommand extends Command> = (event: APIGatewayProxyEvent) => Either<ParamError, TCommand>
 type LoadSession = (sessionId: string) => Promise<Either<DependencyError, Session>>
 type SaveSession = (agg: Aggregate) => Promise<Either<DependencyError, Aggregate>>
-type Action = (aggCommand: AggregateWithCommand<Command>) => Aggregate
+type Action = (aggCommand: AggregateWithCommand<Command>) => Promise<Either<SomeError, Aggregate>>
 
 
 // if this was work you could call this a lambda handler - well once you curried the it until it only took e ...
@@ -159,16 +159,16 @@ function doCommandOnThing<TCommand extends Command>(
   e: APIGatewayProxyEvent): Promise<Either<SomeError, Aggregate>> {
   return EitherAsync.liftEither(commandParser(e))
     .chain(command => loadWithCommand(command, loadSessionAdapter))
-    .map(action)
+    .chain(action)
     .ifRight(saveSessionAdapter)
     .run()
 }
 
 
-const doThing = (aggCommand: AggregateWithCommand<Command>) => {
+const doThing: Action = async (aggCommand: AggregateWithCommand<Command>) => {
   const aggregate = { ...aggCommand.aggregate }
   aggregate.data = "woop"
-  return aggregate
+  return Right(aggregate)
 }
 
 const saveSessionAdapter = async (agg: Aggregate): Promise<Either<DependencyError, Aggregate>> => {
@@ -194,6 +194,34 @@ describe('woop a thing woops aggregates', () => {
     const expected = await eventHandler(validEvent(sessionId))
 
     expect(expected).toStrictEqual(Right({ gid: sessionId, data: "woop" }))
+
+  })
+
+  it('will fail when session fails to load', async () => {
+    const badLoad: LoadSession = async () => {
+      return Left({ message: "Database blew up", data: { dbAddress: "daves address" } })
+    }
+    const curriedDoer = curry(doCommandOnThing)
+    const eventHandler = curriedDoer(eventToWoopCommand, badLoad, doThing, saveSessionAdapter)
+
+    const sessionId = newUuid()
+    const expected = await eventHandler(validEvent(sessionId))
+
+    expect(expected).toStrictEqual(Left({ message: "Database blew up", data: { "dbAddress": "daves address" } }))
+
+  })
+
+  it('will fail when session fails to do a thing', async () => {
+    const baddoThing: Action = async () => {
+      return Left({ message: "Database blew up", data: { dbAddress: "daves address" } })
+    }
+    const curriedDoer = curry(doCommandOnThing)
+    const eventHandler = curriedDoer(eventToWoopCommand, loadSessionSuccessfully, baddoThing, saveSessionAdapter)
+
+    const sessionId = newUuid()
+    const expected = await eventHandler(validEvent(sessionId))
+
+    expect(expected).toStrictEqual(Left({ message: "Database blew up", data: { "dbAddress": "daves address" } }))
 
   })
 })
