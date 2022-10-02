@@ -39,13 +39,13 @@ export type EntityNotFoundData = {
   entityType: EntityType
 }
 
-type StateError = {
+export type StateError = {
   message: StateErrorMessages
   data: EntityNotFoundData
 }
 
-type DependencyErrorMessages = "Could not parse input" | "no port in config"
-type FailedToParseData = {
+export type DependencyErrorMessages = "Could not parse input" | "no port in config"
+export type FailedToParseData = {
   errorMessage: string
   resourceHost: string
   resourceId: string
