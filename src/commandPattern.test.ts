@@ -4,6 +4,7 @@ import { DependencyError, ParamError, SomeError, StateErrorMessages } from './er
 import { uuid, newUuid, UUID } from './uuid'
 
 import { EitherAsync } from 'purify-ts/EitherAsync'
+import { ImportCatalogToGlueRequest } from 'aws-sdk/clients/glue'
 
 const baseRequest: APIGatewayProxyEvent = {
   httpMethod: 'get',
@@ -135,8 +136,8 @@ type AggregateWithCommand<TCommand extends Command> = {
 // we end up wanting to pass both the command and the aggregate around so a function can combine them
 // this just takes both bits and return an object with them
 async function loadWithCommand<TCommand extends Command>(
-  command: TCommand,
-  loadSessionAdapter: (sessionId: string) => Promise<Either<DependencyError, Session>>)
+  loadSessionAdapter: (sessionId: string) => Promise<Either<DependencyError, Session>>,
+  command: TCommand)
   : Promise<Either<SomeError, AggregateWithCommand<TCommand>>> {
   return (await loadAggregate(command.entityId, loadSessionAdapter))
     .map(aggregate => ({ command, aggregate }))
@@ -147,28 +148,75 @@ async function loadWithCommand<TCommand extends Command>(
 type CommandParser<TCommand extends Command> = (event: APIGatewayProxyEvent) => Either<ParamError, TCommand>
 type LoadSession = (sessionId: string) => Promise<Either<DependencyError, Session>>
 type SaveSession = (agg: Aggregate) => Promise<Either<DependencyError, Aggregate>>
-type Action = (aggCommand: AggregateWithCommand<Command>) => Promise<Either<SomeError, Aggregate>>
+type Action<TCommand extends Command> = (aggCommand: AggregateWithCommand<TCommand>) => Promise<Either<SomeError, AggregateWithCommand<TCommand>>>
 
+/**
+ * Intended to be curried - enables a list of actions to be used as if one action
+ * sequentially executes them and passes the new aggregate through
+ * @param actions 
+ * @param aggregate 
+ * @returns 
+ */
+async function doActions<TCommand extends Command>(actions: Action<TCommand>[], aggregate: AggregateWithCommand<TCommand>): Promise<Either<SomeError, AggregateWithCommand<TCommand>>> {
+  const actionsInner = async (actions: Action<TCommand>[], aggregate: AggregateWithCommand<TCommand>): Promise<Either<SomeError, AggregateWithCommand<TCommand>>> => {
+    if (actions.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const a = actions.pop()!
+
+      const result = await a(aggregate)
+      if (result.isLeft()) {
+        return result
+      }
+      return actionsInner(actions, result.unsafeCoerce())
+    } else {
+      return Right(aggregate)
+    }
+  }
+
+  const actionsBackwards = actions.reverse()
+  return actionsInner(actionsBackwards, aggregate)
+}
+
+type ILogger = {
+  info(message: string, data: object)
+  error(message: string, data: object)
+}
+
+class Logger implements ILogger {
+  error(message: string, data: object) {
+    console.error(message, data)
+  }
+  info(message: string, data: object) {
+    console.info(message, data)
+  }
+}
 
 // if this was work you could call this a lambda handler - well once you curried the it until it only took e ...
 function doCommandOnThing<TCommand extends Command>(
+  logger: ILogger,
   commandParser: CommandParser<TCommand>,
   loadSessionAdapter: LoadSession,
-  action: Action,
+  action: Action<TCommand>,
   saveSessionAdapter: SaveSession,
   e: APIGatewayProxyEvent): Promise<Either<SomeError, Aggregate>> {
+  const curriedLoad = curry(loadWithCommand)(loadSessionAdapter)
+  logger.info("starting", { handler: "doCommadnOnThing" })
   return EitherAsync.liftEither(commandParser(e))
-    .chain(command => loadWithCommand(command, loadSessionAdapter))
+    .chain(curriedLoad)
     .chain(action)
+    .map(agc => agc.aggregate)
     .ifRight(saveSessionAdapter)
+    .ifRight((agg) => logger.info("Success on doCommand", { data: { handler: "doCommandThing", agg } }))
+    .ifLeft((err) => logger.error("Failure on doCommand", { data: { err } }))
     .run()
 }
 
 
-const doThing: Action = async (aggCommand: AggregateWithCommand<Command>) => {
+
+async function doThing<TCommand extends Command>(aggCommand: AggregateWithCommand<TCommand>) {
   const aggregate = { ...aggCommand.aggregate }
   aggregate.data = "woop"
-  return Right(aggregate)
+  return Right({ ...aggCommand, aggregate })
 }
 
 const saveSessionAdapter = async (agg: Aggregate): Promise<Either<DependencyError, Aggregate>> => {
@@ -179,7 +227,8 @@ const saveSessionAdapter = async (agg: Aggregate): Promise<Either<DependencyErro
 describe('woop a thing woops aggregates', () => {
   it('will return error if the command fails to parse', async () => {
     const curriedDoer = curry(doCommandOnThing)
-    const eventHandler = curriedDoer(eventToWoopCommand, loadSessionSuccessfully, doThing, saveSessionAdapter)
+    const logger = new Logger()
+    const eventHandler = curriedDoer(logger, eventToWoopCommand, loadSessionSuccessfully, doThing, saveSessionAdapter)
 
     const expected = await eventHandler(validEvent("dave"))
 
@@ -188,21 +237,22 @@ describe('woop a thing woops aggregates', () => {
 
   it('will succees with a valid session id', async () => {
     const curriedDoer = curry(doCommandOnThing)
-    const eventHandler = curriedDoer(eventToWoopCommand, loadSessionSuccessfully, doThing, saveSessionAdapter)
+    const logger = new Logger()
+    const eventHandler = curriedDoer(logger, eventToWoopCommand, loadSessionSuccessfully, doThing, saveSessionAdapter)
 
     const sessionId = newUuid()
     const expected = await eventHandler(validEvent(sessionId))
 
     expect(expected).toStrictEqual(Right({ gid: sessionId, data: "woop" }))
-
   })
 
   it('will fail when session fails to load', async () => {
     const badLoad: LoadSession = async () => {
       return Left({ message: "Database blew up", data: { dbAddress: "daves address" } })
     }
+    const logger = new Logger()
     const curriedDoer = curry(doCommandOnThing)
-    const eventHandler = curriedDoer(eventToWoopCommand, badLoad, doThing, saveSessionAdapter)
+    const eventHandler = curriedDoer(logger, eventToWoopCommand, badLoad, doThing, saveSessionAdapter)
 
     const sessionId = newUuid()
     const expected = await eventHandler(validEvent(sessionId))
@@ -216,12 +266,25 @@ describe('woop a thing woops aggregates', () => {
       return Left({ message: "Database blew up", data: { dbAddress: "daves address" } })
     }
     const curriedDoer = curry(doCommandOnThing)
-    const eventHandler = curriedDoer(eventToWoopCommand, loadSessionSuccessfully, baddoThing, saveSessionAdapter)
+    const logger = new Logger()
+    const eventHandler = curriedDoer(logger, eventToWoopCommand, loadSessionSuccessfully, baddoThing, saveSessionAdapter)
 
     const sessionId = newUuid()
     const expected = await eventHandler(validEvent(sessionId))
 
     expect(expected).toStrictEqual(Left({ message: "Database blew up", data: { "dbAddress": "daves address" } }))
+
+  })
+})
+
+const loggingAction: Promise<Either<SomeError, AggregateWithCommand<Command>>> = async (logger, message, agg) => {
+
+}
+
+
+
+describe('actions often have their own dependencies', () => {
+  it('will take dependencies via currying', () => {
 
   })
 })
